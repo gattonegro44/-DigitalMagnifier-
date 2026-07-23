@@ -1,0 +1,211 @@
+<!-- magnifier_js.html — цифровая лупа с заморозкой кадра на JavaScript (WebRTC + Canvas) -->
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>🔍 Цифровая лупа (заморозка кадра)</title>
+    <style>
+        body { background: #1a1a2e; color: #eee; font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; }
+        .container { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }
+        video, canvas { border: 2px solid #0f3460; border-radius: 8px; background: #000; }
+        canvas { cursor: crosshair; }
+        .controls { margin: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+        button { padding: 10px 20px; border: none; border-radius: 5px; background: #0f3460; color: #fff; cursor: pointer; }
+        button:hover { background: #1a5276; }
+        .info { margin: 10px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Digital Magnifier</h1>
+    <div class="container">
+        <div>
+            <video id="video" width="640" height="480" autoplay style="display:none;"></video>
+            <canvas id="mainCanvas" width="640" height="480"></canvas>
+        </div>
+        <div>
+            <canvas id="magCanvas" width="200" height="200"></canvas>
+            <div style="text-align:center;">Увеличенная область</div>
+        </div>
+    </div>
+    <div class="controls">
+        <button id="freezeBtn">❄️ Заморозить</button>
+        <button id="resumeBtn">▶️ Возобновить</button>
+        <button id="saveBtn">💾 Сохранить</button>
+        <button id="resetBtn">↺ Сбросить</button>
+        <label>Зум: <input type="range" id="zoomSlider" min="1" max="10" step="0.1" value="2"></label>
+    </div>
+    <div class="info" id="status">Статус: Живое видео</div>
+    <script>
+        const video = document.getElementById('video');
+        const mainCanvas = document.getElementById('mainCanvas');
+        const magCanvas = document.getElementById('magCanvas');
+        const ctxMain = mainCanvas.getContext('2d');
+        const ctxMag = magCanvas.getContext('2d');
+        const freezeBtn = document.getElementById('freezeBtn');
+        const resumeBtn = document.getElementById('resumeBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const zoomSlider = document.getElementById('zoomSlider');
+        const statusDiv = document.getElementById('status');
+
+        let stream = null;
+        let frozenFrame = null;
+        let isFrozen = false;
+        let magnifierPos = { x: 320, y: 240 };
+        let zoom = 2.0;
+        const magnifierSize = 200;
+
+        // Инициализация камеры
+        async function initCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                video.srcObject = stream;
+                await video.play();
+                requestAnimationFrame(updateMain);
+            } catch (err) {
+                alert('Ошибка доступа к камере: ' + err.message);
+            }
+        }
+
+        function updateMain() {
+            if (!isFrozen && video.readyState === video.HAVE_ENOUGH_DATA) {
+                ctxMain.drawImage(video, 0, 0, mainCanvas.width, mainCanvas.height);
+                // Рисуем рамку-указатель
+                const size = magnifierSize / zoom;
+                ctxMain.strokeStyle = 'lime';
+                ctxMain.lineWidth = 2;
+                ctxMain.strokeRect(magnifierPos.x - size/2, magnifierPos.y - size/2, size, size);
+            } else if (isFrozen && frozenFrame) {
+                ctxMain.putImageData(frozenFrame, 0, 0);
+                // Рисуем круг лупы
+                ctxMain.beginPath();
+                ctxMain.arc(magnifierPos.x, magnifierPos.y, magnifierSize/2, 0, 2*Math.PI);
+                ctxMain.strokeStyle = 'yellow';
+                ctxMain.lineWidth = 2;
+                ctxMain.stroke();
+            }
+            // Обновляем увеличенную область (если заморожено)
+            if (isFrozen && frozenFrame) {
+                updateMagnifier();
+            }
+            requestAnimationFrame(updateMain);
+        }
+
+        function updateMagnifier() {
+            const x = magnifierPos.x;
+            const y = magnifierPos.y;
+            const regionSize = magnifierSize / zoom;
+            const half = regionSize / 2;
+            let sx = x - half;
+            let sy = y - half;
+            let sw = regionSize;
+            let sh = regionSize;
+            // Коррекция границ
+            const cw = mainCanvas.width;
+            const ch = mainCanvas.height;
+            if (sx < 0) { sw += sx; sx = 0; }
+            if (sy < 0) { sh += sy; sy = 0; }
+            if (sx + sw > cw) { sw = cw - sx; }
+            if (sy + sh > ch) { sh = ch - sy; }
+            if (sw <= 0 || sh <= 0) return;
+            // Извлекаем область из замороженного кадра
+            const imageData = ctxMain.getImageData(sx, sy, sw, sh);
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = sw;
+            tempCanvas.height = sh;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            // Масштабируем до magnifierSize
+            ctxMag.clearRect(0, 0, magCanvas.width, magCanvas.height);
+            ctxMag.drawImage(tempCanvas, 0, 0, magCanvas.width, magCanvas.height);
+            // Центральная точка
+            ctxMag.beginPath();
+            ctxMag.arc(magCanvas.width/2, magCanvas.height/2, 5, 0, 2*Math.PI);
+            ctxMag.fillStyle = 'lime';
+            ctxMag.fill();
+        }
+
+        // События мыши на основном холсте
+        mainCanvas.addEventListener('mousemove', (e) => {
+            const rect = mainCanvas.getBoundingClientRect();
+            const scaleX = mainCanvas.width / rect.width;
+            const scaleY = mainCanvas.height / rect.height;
+            magnifierPos.x = (e.clientX - rect.left) * scaleX;
+            magnifierPos.y = (e.clientY - rect.top) * scaleY;
+            // Ограничение
+            magnifierPos.x = Math.max(0, Math.min(mainCanvas.width, magnifierPos.x));
+            magnifierPos.y = Math.max(0, Math.min(mainCanvas.height, magnifierPos.y));
+        });
+
+        mainCanvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 1 : -1;
+            zoom += delta * 0.2;
+            zoom = Math.max(1, Math.min(10, zoom));
+            zoomSlider.value = zoom;
+        });
+
+        // Кнопки
+        freezeBtn.addEventListener('click', () => {
+            if (!isFrozen) {
+                const imageData = ctxMain.getImageData(0, 0, mainCanvas.width, mainCanvas.height);
+                frozenFrame = imageData;
+                isFrozen = true;
+                statusDiv.textContent = 'Статус: Заморожено';
+                freezeBtn.disabled = true;
+                resumeBtn.disabled = false;
+            }
+        });
+
+        resumeBtn.addEventListener('click', () => {
+            if (isFrozen) {
+                isFrozen = false;
+                frozenFrame = null;
+                statusDiv.textContent = 'Статус: Живое видео';
+                ctxMag.clearRect(0, 0, magCanvas.width, magCanvas.height);
+                freezeBtn.disabled = false;
+                resumeBtn.disabled = true;
+            }
+        });
+
+        saveBtn.addEventListener('click', () => {
+            const canvas = isFrozen ? mainCanvas : null;
+            if (isFrozen && frozenFrame) {
+                const link = document.createElement('a');
+                link.download = isFrozen ? 'frozen_frame.png' : 'live_frame.png';
+                link.href = mainCanvas.toDataURL('image/png');
+                link.click();
+            } else {
+                const link = document.createElement('a');
+                link.download = 'live_frame.png';
+                link.href = mainCanvas.toDataURL('image/png');
+                link.click();
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            magnifierPos = { x: 320, y: 240 };
+            zoom = 2.0;
+            zoomSlider.value = 2.0;
+            if (isFrozen) {
+                // сброс заморозки
+                isFrozen = false;
+                frozenFrame = null;
+                statusDiv.textContent = 'Статус: Живое видео';
+                ctxMag.clearRect(0, 0, magCanvas.width, magCanvas.height);
+                freezeBtn.disabled = false;
+                resumeBtn.disabled = true;
+            }
+        });
+
+        zoomSlider.addEventListener('input', () => {
+            zoom = parseFloat(zoomSlider.value);
+        });
+
+        // Инициализация
+        initCamera();
+        resumeBtn.disabled = true;
+        statusDiv.textContent = 'Статус: Инициализация...';
+    </script>
+</body>
+</html>
